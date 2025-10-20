@@ -1,3 +1,79 @@
+
+class CrossAttention(nn.Module):
+    def __init__(
+        self, 
+        dim, 
+        num_heads=12,
+        mlp_ratio=4.0, 
+        qkv_bias=False, 
+        fused_attn=True,
+        act_layer=nn.GELU, 
+        norm_layer=nn.LayerNorm
+    ) -> None:
+        super().__init__()
+        assert dim % num_heads == 0, f"dim should be divisible by num_heads {dim} {num_heads}."
+        self.num_heads = num_heads
+        self.fused_attn = fused_attn
+        
+        # 注意力相关参数
+        head_dim = dim // num_heads
+        self.scale = head_dim**-0.5
+        
+        # 线性变换层
+        self.q = nn.Linear(dim, dim, bias=qkv_bias)
+        self.kv = nn.Linear(dim, int(dim * 2), bias=qkv_bias)
+        
+        # 归一化层
+        self.norm1 = norm_layer(dim)
+        self.norm2 = norm_layer(dim)
+        
+        # MLP层
+        mlp_hidden_dim = int(dim * mlp_ratio)
+        self.mlp = MLP(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer)
+
+    def forward(self, q, x) -> torch.Tensor:
+        """
+        参数:
+            q: 查询张量, shape (B, n, C)
+            x: 上下文张量, shape (B, N, C)
+        返回:
+            q: 处理后的查询张量, shape (B, n, C)
+        """
+        # 保存原始查询用于残差连接
+        residual = q
+        
+        # 归一化上下文
+        x_norm = self.norm1(x)
+        
+        # 处理查询
+        B, n, C = q.shape
+        q_transformed = self.q(q).reshape(B, n, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
+
+        # 处理键值对
+        B, N, C = x_norm.shape
+        kv = self.kv(x_norm).reshape(B, N, 2, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        k, v = kv[0], kv[1]  # (batch_size, num_heads, seq_len, feature_dim_per_head)
+
+        # 注意力计算
+        if self.fused_attn:
+            with torch.nn.attention.sdpa_kernel(SDPBackend.FLASH_ATTENTION):
+                attended_q = F.scaled_dot_product_attention(q_transformed, k, v)
+        else:
+            xattn = (q_transformed @ k.transpose(-2, -1)) * self.scale
+            xattn = xattn.softmax(dim=-1)  # (batch_size, num_heads, query_len, seq_len)
+            attended_q = xattn @ v
+
+        # 重塑输出
+        attended_q = attended_q.transpose(1, 2).reshape(B, n, C)
+        
+        # 第一个残差连接
+        q = residual + attended_q
+        
+        # 第二个残差连接 + MLP
+        q = q + self.mlp(self.norm2(q))
+        
+        return q
+
 class DualCrossAttention(nn.Module):
     """
     双注意力模块：先自注意力，后交叉注意力
