@@ -104,7 +104,10 @@ class DFoTVideo(BasePytorchAlgo):
             assert (
                 self.cfg.diffusion.is_continuous
             ), "`torch.compile` is only verified for continuous-time diffusion models. To use it for discrete-time models, it should be tested, including # graph breaks"
-
+        if "controlnet" in self.cfg._name:
+            self.cfg.compile = False
+            print(f"{cyan('torch.compile is not supported for ControlNet models, disabling it')}")
+            
         self.diffusion_model = torch.compile(
             diffusion_cls(
                 cfg=self.cfg.diffusion,
@@ -115,6 +118,7 @@ class DFoTVideo(BasePytorchAlgo):
             ),
             disable=not self.cfg.compile,
         )
+        # import pdb; pdb.set_trace()
         self.register_data_mean_std(self.cfg.data_mean, self.cfg.data_std)
 
         # 2. VAE model
@@ -282,6 +286,8 @@ class DFoTVideo(BasePytorchAlgo):
                 gt_videos = batch["videos"]
         else:
             xs = batch["videos"]
+            gt_videos = batch.get("videos", None) 
+        # import pdb; pdb.set_trace() 
         xs = self._normalize_x(xs)
 
         # 2. Prepare external conditions
@@ -329,7 +335,7 @@ class DFoTVideo(BasePytorchAlgo):
             "xs_pred": xs_pred,
             "xs": xs,
         }
-
+        
         return output_dict
 
     def on_before_optimizer_step(self, optimizer: Optimizer) -> None:
@@ -351,9 +357,11 @@ class DFoTVideo(BasePytorchAlgo):
         # 1. If running validation while training a model, directly evaluate
         # the denoising performance to detect overfitting, etc.
         # Logs the "denoising_vis" visualization as well as "validation/loss" metric.
+        # print("short cut")
+        # return 
         if self.trainer.state.fn == "FIT":
             self._eval_denoising(batch, batch_idx, namespace=namespace)
-
+        # import pdb; pdb.set_trace()
         # 2. Sample all videos (based on the specified tasks)
         # and log the generated videos and metrics.
         if not (
@@ -362,8 +370,9 @@ class DFoTVideo(BasePytorchAlgo):
             all_videos = self._sample_all_videos(batch, batch_idx, namespace)
             self._update_metrics(all_videos)
             self._log_videos(all_videos, namespace)
-
+    
     def on_validation_epoch_start(self) -> None:
+        torch.cuda.empty_cache()
         if self.cfg.logging.deterministic is not None:
             self.generator = torch.Generator(device=self.device).manual_seed(
                 self.global_rank
@@ -371,7 +380,6 @@ class DFoTVideo(BasePytorchAlgo):
             )
         if self.is_latent_diffusion and not self.is_latent_online:
             self._load_vae()
-
     def on_validation_epoch_end(self, namespace="validation") -> None:
         self.generator = None
         if self.is_latent_diffusion and not self.is_latent_online:
@@ -389,6 +397,7 @@ class DFoTVideo(BasePytorchAlgo):
                 prog_bar=True,
                 sync_dist=True,
             )
+        torch.cuda.empty_cache()
 
     def test_step(self, *args: Any, **kwargs: Any) -> STEP_OUTPUT:
         return self.validation_step(*args, **kwargs, namespace="test")
@@ -468,7 +477,7 @@ class DFoTVideo(BasePytorchAlgo):
                 else self._interpolate_videos
             )
             all_videos[task] = sample_fn(xs, conditions=conditions)
-
+        # import pdb; pdb.set_trace()
         # remove None values
         all_videos = {k: v for k, v in all_videos.items() if v is not None}
         # rearrange/unnormalize/detach the videos
@@ -485,6 +494,7 @@ class DFoTVideo(BasePytorchAlgo):
             all_videos["prediction"][:, : self.n_context_frames] = all_videos["gt"][
                 :, : self.n_context_frames
             ]
+
         return all_videos
 
     def _predict_videos(
@@ -516,7 +526,7 @@ class DFoTVideo(BasePytorchAlgo):
         key_conditions = (
             conditions[:, keyframe_indices] if conditions is not None else None
         )
-
+        # import pdb; pdb.set_trace()
         # 1. Predict the keyframes
         xs_pred_key, *_ = self._predict_sequence(
             xs_pred[:, : self.n_context_tokens],
@@ -661,7 +671,9 @@ class DFoTVideo(BasePytorchAlgo):
             initial=0,
             desc="Interpolating with DFoT",
             leave=False,
+            disable=False,
         )
+        # import pdb; pdb.set_trace()
         for current_plan in plan:
             # Collect the batched input for the current plan
             current_context = []
@@ -700,6 +712,7 @@ class DFoTVideo(BasePytorchAlgo):
                 ),
             ):
                 batch_size = current_context_chunk.shape[0]
+                # import pdb; pdb.set_trace()
                 xs_pred_chunk, _ = self._sample_sequence(
                     batch_size=batch_size,
                     context=current_context_chunk,
@@ -709,7 +722,6 @@ class DFoTVideo(BasePytorchAlgo):
                     pbar=pbar,
                 )
                 xs_pred.append(xs_pred_chunk)
-
             xs_pred = torch.cat(xs_pred, 0)
             # Update with the interpolated frames
             for frames, pred in zip(current_plan, xs_pred.chunk(len(current_plan), 0)):
@@ -1006,7 +1018,12 @@ class DFoTVideo(BasePytorchAlgo):
                 sliding_context_len = self.max_tokens - 1
         if sliding_context_len == -1:
             sliding_context_len = self.max_tokens - 1
-
+            
+        if context is not None and context.isnan().any():
+            raise ValueError(
+                "NaN values detected in the context. "
+                "Check the model and the input data."
+            )
         batch_size, gt_len, *_ = context.shape
 
         if sliding_context_len < gt_len:
@@ -1032,6 +1049,7 @@ class DFoTVideo(BasePytorchAlgo):
             initial=0,
             desc="Predicting with DFoT",
             leave=False,
+            disable=False
         )
         while curr_token < length:
             if record is not None:
@@ -1061,7 +1079,7 @@ class DFoTVideo(BasePytorchAlgo):
             cond_slice = None
             if conditions is not None:
                 cond_slice = conditions[:, curr_token - c : curr_token - c + cond_len]
-
+            # import pdb; pdb.set_trace()   
             new_pred, record = self._sample_sequence(
                 batch_size,
                 length=l,
@@ -1173,6 +1191,7 @@ class DFoTVideo(BasePytorchAlgo):
 
         horizon = length if self.use_causal_mask else self.max_tokens
         padding = horizon - length
+        # import pdb; pdb.set_trace()
         # create initial xs_pred with noise
         xs_pred = torch.randn(
             (batch_size, horizon, *x_shape),
@@ -1235,7 +1254,7 @@ class DFoTVideo(BasePytorchAlgo):
                 desc="Sampling with DFoT",
                 leave=False,
             )
-
+        # import pdb; pdb.set_trace()
         for m in range(scheduling_matrix.shape[0] - 1):
             from_noise_levels = scheduling_matrix[m]
             to_noise_levels = scheduling_matrix[m + 1]
@@ -1419,8 +1438,16 @@ class DFoTVideo(BasePytorchAlgo):
 
     def _should_include_in_checkpoint(self, key: str) -> bool:
         return key.startswith("diffusion_model.model") or key.startswith(
-            "diffusion_model._orig_mod.model"
-        )
+            "diffusion_model._orig_mod.model" 
+        ) or key.startswith(
+            "diffusion_model._orig_mod.base_model"
+        ) or key.startswith(
+            "diffusion_model.base_model"
+        ) or key.startswith(
+                "diffusion_model._orig_mod.controlnet"
+        ) or key.startswith("diffusion_model.controlnet")
+        
+            
 
     def on_save_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
         # 1. (Optionally) uncompile the model's state_dict before saving
@@ -1436,7 +1463,7 @@ class DFoTVideo(BasePytorchAlgo):
         # 1. (Optionally) compile the model's state_dict before loading
         self._compile_checkpoint(checkpoint)
         # 2. (Optionally) swap the state_dict of the model with the EMA weights for inference
-        super().on_load_checkpoint(checkpoint)
+        # super().on_load_checkpoint(checkpoint)
         # 3. (Optionally) reset the optimizer states - for fresh finetuning or resuming training
         if self.cfg.checkpoint.reset_optimizer:
             checkpoint["optimizer_states"] = []
@@ -1444,7 +1471,28 @@ class DFoTVideo(BasePytorchAlgo):
         # 4. Rewrite the state_dict of the checkpoint, only leaving meaningful keys
         # defined by self._should_include_in_checkpoint
         # also print out warnings when the checkpoint does not exactly match the expected format
-
+        ## add for controlnet 
+        # remap key 
+        ckpt_with_controlnet_weights = False
+        if self.cfg.compile:
+            # model is compiled 
+            base_str = "diffusion_model._orig_mod.model"
+        else:
+            base_str = "diffusion_model.model" 
+        
+        target_str = base_str+ ".base_model"
+        if "controlnet" in self.cfg.backbone.name:
+            for key in list(checkpoint["state_dict"].keys()):
+                if  base_str in key:
+                    # import pdb; pdb.set_trace()
+                    new_key = key.replace(base_str, target_str)
+                    checkpoint["state_dict"][new_key] = checkpoint["state_dict"][key]
+                    # print(f"key {key} is remapped to {new_key}")
+                    del checkpoint["state_dict"][key]
+                if "control" in key:
+                    ckpt_with_controlnet_weights = True
+        # print("ckpt_with_controlnet_weights", ckpt_with_controlnet_weights)
+        # import pdb; pdb.set_trace()
         new_state_dict = {}
         for key, value in self.state_dict().items():
             if (
@@ -1467,12 +1515,14 @@ class DFoTVideo(BasePytorchAlgo):
                 ignored_keys,
             )
         # print keys that are not found in the checkpoint
+        # import pdb; pdb.set_trace()
         missing_keys = [
             key
             for key in self.state_dict().keys()
             if self._should_include_in_checkpoint(key)
             and key not in checkpoint["state_dict"]
         ]
+        
         if missing_keys:
             rank_zero_print(
                 cyan("The following keys are not found in the checkpoint:"),
@@ -1488,6 +1538,7 @@ class DFoTVideo(BasePytorchAlgo):
                         "Strict checkpoint loading is turned off, so using the initialized value for the missing keys."
                     )
                 )
+        # import pdb; pdb.set_trace()
         checkpoint["state_dict"] = new_state_dict
 
     def _load_ema_weights_to_state_dict(self, checkpoint: Dict[str, Any]) -> None:

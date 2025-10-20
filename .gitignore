@@ -2,10 +2,11 @@
 __pycache__/
 *.py[cod]
 *$py.class
-
+common_metrics_on_video_quality/
 # C extensions
 *.so
-
+examples 
+visualization
 # Distribution / packaging
 .Python
 build/
@@ -26,7 +27,14 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
-
+evaluations
+samples
+wandb
+exps
+external_backup
+frame_16_curation
+ckpt
+latents
 # PyInstaller
 #  Usually these files are written by a python script from a template
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.

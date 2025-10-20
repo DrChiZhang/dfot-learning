@@ -6,8 +6,8 @@
 # useful for dataset-specific overrides
 
 dataset:
-  subdataset_size: 2400000
-  num_eval_videos: 768
+  subdataset_size: 2400000 
+  num_eval_videos: 100 
   maximize_training_data: true
   augmentation:
     frame_skip_increase: 1
@@ -47,14 +47,14 @@ algorithm:
   
 experiment:
   training:
-    lr: 5e-5
-    batch_size: 8
-    max_epochs: 22
+    lr: 8e-6
+    batch_size: 2
+    max_epochs: 26
   validation:
     batch_size: 8
     data:
       num_workers: 0
   test:
-    batch_size: 8
+    batch_size: 4 
     data:
       num_workers: 0

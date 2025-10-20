@@ -3,6 +3,7 @@
 defaults:
   - dfot_video
   - override backbone: u_vit3d_pose
+  # - override backbone: u_vit3d_pose_controlnet
 
 camera_pose_conditioning:
   normalize_by: first # first, mean

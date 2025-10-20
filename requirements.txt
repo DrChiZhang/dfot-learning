@@ -22,8 +22,8 @@ pytorchvideo
 scipy
 rotary_embedding_torch
 torchmetrics[image]==0.11.4
-tfrecord[torch]
-bezier
+# tfrecord[torch]
+# bezier
 timm
 zmq
 openai-clip

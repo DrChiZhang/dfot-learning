@@ -92,8 +92,9 @@ def read_video(
                         {"video": 0},
                     )
 
-    except av.AVError:
+    except av.AVError as e :
         # TODO raise a warning?
+        print(f"[Warning][dataset][video][utils]io.py read video av error : {filename} Erorr={e}")
         pass
 
     vframes_list = [frame.to_rgb().to_ndarray() for frame in video_frames]
@@ -108,3 +109,67 @@ def read_video(
         vframes = vframes.permute(0, 3, 1, 2)
 
     return vframes
+import av
+
+def is_video_openable(filepath: str) -> bool:
+    """
+    尝试打开视频文件并读取第一帧以确认视频可用。
+    不真正读取全部帧。
+
+    Args:
+        filepath (str): 视频文件路径
+
+    Returns:
+        bool: 如果能成功打开并读取至少一帧，返回 True，否则 False
+    """
+    try:
+        with av.open(filepath) as container:
+            # 找到第一个视频流
+            video_stream = next((s for s in container.streams if s.type == 'video'), None)
+            if video_stream is None:
+                return False
+
+            # 尝试解码第一帧
+            for packet in container.demux(video_stream):
+                for frame in packet.decode():
+                    # 只要能解码出一帧，就返回 True
+                    return True
+            # 如果没解码出任何帧，返回 False
+            return False
+    except Exception:
+        return False
+
+if __name__ == "__main__":
+    import os
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from tqdm import tqdm
+
+    def is_video_openable(filepath: str) -> bool:
+        import av
+        try:
+            with av.open(filepath) as container:
+                video_stream = next((s for s in container.streams if s.type == 'video'), None)
+                if video_stream is None:
+                    return False
+                for packet in container.demux(video_stream):
+                    for frame in packet.decode():
+                        return True
+                return False
+        except Exception:
+            return False
+
+    video_folder = "data/real-estate-10k/training_256/"
+    files = [f for f in os.listdir(video_folder) if f.endswith(".mp4")]
+
+    def check_file(filename):
+        filepath = os.path.join(video_folder, filename)
+        return filename, is_video_openable(filepath)
+
+    # 用线程池并行检查
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = {executor.submit(check_file, f): f for f in files}
+
+        for future in tqdm(as_completed(futures), total=len(futures)):
+            filename, can_open = future.result()
+            if not can_open:
+                print(f"{filename} is NOT openable or decodable.")

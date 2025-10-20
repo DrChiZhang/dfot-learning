@@ -22,7 +22,7 @@ training:
     shuffle: False
   checkpointing:
     every_n_train_steps: null
-    every_n_epochs: 2
+    every_n_epochs: 1
   optim:
     gradient_clip_val: 1.0
 
@@ -40,3 +40,5 @@ test:
   data:
     num_workers: 1
 reload_dataloaders_every_n_epochs: 1
+
+find_unused_parameters: False

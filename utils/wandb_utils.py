@@ -99,6 +99,8 @@ class SpaceEfficientWandbLogger(WandbLogger):
         self._last_artifacts = []
 
     def _scan_and_log_checkpoints(self, checkpoint_callback: ModelCheckpoint) -> None:
+        print("[Wandb Warrning By Haoyu]: we pass this function to avoid crash when uploading checkpoints. The checkpionts are saved to blob")
+        return 
         import wandb
 
         # get checkpoints to be saved with associated score

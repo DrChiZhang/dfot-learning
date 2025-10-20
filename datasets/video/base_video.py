@@ -12,7 +12,7 @@ from einops import rearrange
 from utils.distributed_utils import rank_zero_print
 from utils.print_utils import cyan
 from datasets.video.utils import read_video, VideoTransform
-
+import os 
 SPLIT = Literal["training", "validation", "test"]
 
 
@@ -59,6 +59,7 @@ class BaseVideoDataset(torch.utils.data.Dataset, ABC):
                 self.build_metadata(split)
 
         self.metadata = self.load_metadata()
+        print(f"Loaded {len(self.metadata)} videos for {self.split} split")
         self.augment_dataset()
         self.transform = self.build_transform()
 
@@ -193,7 +194,7 @@ class BaseVideoDataset(torch.utils.data.Dataset, ABC):
         )
         return [
             {key: metadata[key][i] for key in metadata.keys()}
-            for i in range(len(metadata["video_paths"]))
+            for i in range(len(metadata["video_paths"])) if os.path.exists(metadata["video_paths"][i]) 
         ]
 
     def video_length(self, video_metadata: Dict[str, Any]) -> int:
@@ -397,7 +398,7 @@ class BaseAdvancedVideoDataset(BaseVideoDataset):
             end_epoch, end_idx_in_epoch = idx_to_epoch_and_idx(self.subdataset_size - 1)
             assert (
                 0 <= end_epoch - start_epoch <= 1
-            ), "Subdataset size should be <= dataset size"
+            ), f"Subdataset size should be <= dataset size got end_epoch={end_epoch}, start_epoch={start_epoch}"
 
             epoch_to_shuffled_indices: Dict[int, List[int]] = {}
             for epoch in range(start_epoch, end_epoch + 1):
@@ -539,7 +540,7 @@ class BaseAdvancedVideoDataset(BaseVideoDataset):
                 video = self.load_video(video_metadata, start_frame, end_frame)
 
         lens = [len(x) for x in (video, cond, latent) if x is not None]
-        assert len(set(lens)) == 1, "video, cond, latent must have the same length"
+        assert len(set(lens)) == 1, f"video, cond, latent must have the same length {lens}"
         pad_len = self.n_frames - lens[0]
 
         nonterminal = torch.ones(self.n_frames, dtype=torch.bool)
@@ -564,7 +565,7 @@ class BaseAdvancedVideoDataset(BaseVideoDataset):
         output = {
             "videos": self.transform(video) if video is not None else None,
             "latents": latent,
-            "conds": cond,
+            "conds": cond, # 256 16
             "nonterminal": nonterminal,
         }
         return {key: value for key, value in output.items() if value is not None}

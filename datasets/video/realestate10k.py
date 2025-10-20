@@ -35,11 +35,6 @@ class RealEstate10KBaseVideoDataset(BaseVideoDataset):
     """
     RealEstate10K base video dataset.
     The dataset will be preprocessed to `_SUPPORTED_RESOLUTIONS` in the format of `_SUPPORTED_RESOLUTIONS[resolution]` during the download.
-
-    NOTE: The camera intrinsics for poses are not fully accurate, as we have not renormalized them after rescaling and center-cropping.
-    - We keep this behavior to maintain compatibility with existing code and checkpoints.
-    - The impact is expected to be minimal: YouTube videos typically have similar aspect ratios, and the dataset is not metric-scale.
-    - However, we recommend properly renormalizing the intrinsics when training a new model with this codebase.
     """
 
     _ALL_SPLITS = ["training", "test"]
@@ -52,6 +47,7 @@ class RealEstate10KBaseVideoDataset(BaseVideoDataset):
     }
 
     def _should_download(self) -> bool:
+        return False 
         if self.resolution not in self._SUPPORTED_RESOLUTIONS:
             raise ValueError(
                 f"Resolution {self.resolution} is not supported. Supported resolutions: {list(self._SUPPORTED_RESOLUTIONS.keys())}. Please modify `_SUPPORTED_RESOLUTIONS` in the RealEstate10kBaseVideoDataset class to support this resolution."
@@ -69,18 +65,26 @@ class RealEstate10KBaseVideoDataset(BaseVideoDataset):
                 "Please read the NOTE in the `_download_videos` function at `datasets/video/realestate10k_video_dataset.py` before continuing."
             )
         )
+        # print(cyan("Shortcutting this function will not download the dataset!"))
+        # return 
         input("Press Enter to continue...")
-        download_and_extract_archive(
-            self._DATASET_URL,
-            self.save_dir,
-            filename="raw.tar.gz",
-            remove_finished=True,
-        )
-        (self.save_dir / "RealEstate10K").rename(self.save_dir / "raw")
-        (self.save_dir / "raw" / "train").rename(self.save_dir / "raw" / "training")
-
+        # download_and_extract_archive(
+        #     self._DATASET_URL,
+        #     self.save_dir,
+        #     filename="raw.tar.gz",
+        #     remove_finished=True,
+        # )
+        try:
+            (self.save_dir / "RealEstate10K").rename(self.save_dir / "raw")
+            (self.save_dir / "raw" / "train").rename(self.save_dir / "raw" / "training")
+        except OSError:
+            print(
+                "The dataset is already downloaded. Please remove the existing dataset before downloading again."
+            )
+        
         for split in ["training", "test"]:
             plan = self._build_download_plan(split)
+            # import pdb; pdb.set_trace() 
             self._download_videos(split, plan)
             self._preprocess_videos(split, plan)
 
@@ -99,10 +103,10 @@ class RealEstate10KBaseVideoDataset(BaseVideoDataset):
         - test: 655 / 696 videos = 7148 / 7711 clips
         """
         print(cyan(f"Downloading {split} videos from YouTube..."))
-        download_dir = self.save_dir / "raw" / split
+        download_dir = self.save_dir / "raw" / split #  PosixPath('data/real-estate-10k/raw/training') 
         download_dir.mkdir(parents=True, exist_ok=True)
         download_fn = partial(_download_youtube_video, download_dir=download_dir)
-        with Pool(32) as pool:
+        with Pool(1) as pool:
             list(
                 tqdm(
                     pool.imap(download_fn, urls),
@@ -321,11 +325,10 @@ class RealEstate10KAdvancedVideoDataset(
             frame_skip = random.randint(self.frame_skip, frame_skip)
 
         assert frame_skip > 0, f"Frame skip {frame_skip} should be greater than 0"
+        # For training epoch 
         end_frame = start_frame + (self.cfg.max_frames - 1) * frame_skip + 1
-
         video, cond = self.load_video_and_cond(video_metadata, start_frame, end_frame)
-        assert len(video) == len(cond), "Video and cond have different lengths"
-
+        assert len(video) == len(cond), f"idx={idx} metadata={video_metadata}  Video and cond have different lengths {len(video)} != {len(cond)} video_idx={video_idx} start_frame={start_frame} end_frame={end_frame} frame_skip={frame_skip}"
         video, cond = video[::frame_skip], self._process_external_cond(cond, frame_skip)
         video, cond = self._augment(video, cond)
         return {
@@ -385,11 +388,11 @@ def _download_youtube_video(youtube_url: str, download_dir: Path) -> None:
     """
 
     def download_with_client(client: Optional[str] = None):
-        yt = YouTube(youtube_url) if client is None else YouTube(youtube_url, client)
+        yt = YouTube(youtube_url,use_po_token=True) if client is None else YouTube(youtube_url, client)
         yt.streams.filter(res="360p").first().download(
             download_dir, filename=f"{_youtube_url_to_id(youtube_url)}.mp4"
         )
-
+    # import pdb; pdb.set_trace()
     try:
         download_with_client(youtube_url)
     except Exception:

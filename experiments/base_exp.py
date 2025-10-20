@@ -190,7 +190,7 @@ class BaseLightningExperiment(BaseExperiment):
             self.algo = torch.compile(self.algo)
 
         callbacks = [] + self._build_common_callbacks()
-
+        # import pdb; pdb.set_trace()
         trainer = pl.Trainer(
             accelerator="auto",
             logger=self.logger,

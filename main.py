@@ -131,7 +131,8 @@ def run_local(cfg: DictConfig):
         checkpoint_path = wandb_to_local_path(run_path)
     elif load and is_hf_path(load):
         checkpoint_path = download_pretrained(load)
-
+    print("Checkpoint path:", cyan(checkpoint_path))
+    print(OmegaConf.to_yaml(cfg)) 
     # launch experiment
     experiment = build_experiment(cfg, logger, checkpoint_path)
     for task in cfg.experiment.tasks:
@@ -259,7 +260,7 @@ def run(cfg: DictConfig):
             download_vae_checkpoints(cfg)
         if load and is_hf_path(load) and "_on_compute_node" not in cfg:
             download_pretrained(load)
-
+ 
     if "cluster" in cfg and not "_on_compute_node" in cfg:
         print(
             cyan(

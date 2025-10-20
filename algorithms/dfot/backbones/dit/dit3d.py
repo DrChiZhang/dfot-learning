@@ -128,7 +128,7 @@ class DiT3D(BaseBackbone):
         x = rearrange(x, "(b t) p c -> b (t p) c", b=input_batch_size)
 
         emb = self.noise_level_pos_embedding(noise_levels)
-
+        import pdb; pdb.set_trace()
         if external_cond is not None:
             emb = emb + self.external_cond_embedding(external_cond, external_cond_mask)
         emb = repeat(emb, "b t c -> b (t p) c", p=self.num_patches)

@@ -12,3 +12,4 @@ from .realestate10k import (
 )
 from .realestate10k_ood import RealEstate10KOODAdvancedVideoDataset
 from .realestate10k_mini import RealEstate10KMiniAdvancedVideoDataset
+from .realestate10k_rotate import RealEstate10KRotateAdvancedVideoDataset

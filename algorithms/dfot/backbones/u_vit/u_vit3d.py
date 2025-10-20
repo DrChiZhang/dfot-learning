@@ -102,7 +102,7 @@ class UViT3D(BaseBackbone):
                 dim,
                 (self.temporal_length, level_resolution, level_resolution),
             )
-
+        # import pdb; pdb.set_trace() 
         def _rope_kwargs(i_level: int):
             return (
                 {"rope": self.pos_embs[f"{i_level}"]}
@@ -276,9 +276,13 @@ class UViT3D(BaseBackbone):
         """
         Run the blocks (except up/downsampling blocks) for a given level, accompanied by reshaping operations before and after.
         """
+        # print(f"i_level: {i_level}, x.shape: {x.shape}, emb.shape: {emb.shape}")
         x, emb = self._rearrange_and_add_pos_emb_if_transformer(x, emb, i_level)
+        # print(f"i_level: {i_level}, x.shape: {x.shape}, emb.shape: {emb.shape}")
         x = self._run_level_blocks(x, emb, i_level, is_up)
+        # print(f"i_level: {i_level}, x.shape: {x.shape}, emb.shape: {emb.shape}")
         x = self._unrearrange_if_transformer(x, i_level)
+        # print(f"i_level: {i_level}, x.shape: {x.shape}, emb.shape: {emb.shape}")
         return x
 
     def forward(
@@ -324,6 +328,7 @@ class UViT3D(BaseBackbone):
         # Middle blocks
         x = self._run_level(x, emb, self.num_levels - 1)
 
+        # import pdb; pdb.set_trace()
         # Up-sampling blocks
         for _i_level, up_block in enumerate(self.up_blocks):
             i_level = self.num_levels - 2 - _i_level

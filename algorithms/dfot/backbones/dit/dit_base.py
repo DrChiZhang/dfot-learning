@@ -148,7 +148,11 @@ class DiTBase(nn.Module):
         )
 
         self.final_layer = DITFinalLayer(hidden_size, self.out_channels)
-
+    """
+    @propery 装饰器
+    - 将方法转换为只读属性
+    - 允许像访问属性一样调用方法：obj.is_factorized 而不是 obj.is_factorized()
+    """
     @property
     def is_factorized(self) -> bool:
         return self.variant in {"factorized_encoder", "factorized_attention"}
@@ -204,37 +208,49 @@ class DiTBase(nn.Module):
         """
         Forward pass of the DiTBase model.
         Args:
-            x: Input tensor of shape (B, N, C).
-            c: Conditioning tensor of shape (B, N, C).
+            x: Input tensor of shape (B, N, C). 输入张量，形状为(批次大小, 序列长度, 通道数)
+            c: Conditioning tensor of shape (B, N, C). 条件张量，形状同输入
         Returns:
-            Output tensor of shape (B, N, OC).
+            Output tensor of shape (B, N, OC). 输出张量，形状为(批次大小, 序列长度, 输出通道数)
         """
+        # 初始化图像数据为None，用于后续的条件处理
         x_img = None
+        
+        # 图像-视频联合训练的分割逻辑
         if x.size(1) > self.max_tokens:
+            # 非训练模式或未设置num_patches时抛出错误
             if not self.training or self.num_patches is None:
                 raise ValueError(
                     f"Input sequence length {x.size(1)} exceeds the maximum length {self.max_tokens}"
                 )
-
-            else:  # image-video joint training
+            else:  
+                # 图像-视频联合训练模式：分割输入数据
+                # 计算视频数据的结束位置（时间长度×每帧的patch数）
                 video_end = self.max_temporal_length * self.num_patches
+                
+                # 分割输入和条件张量：前部分为视频，后部分为图像
                 x, x_img, c, c_img = (
-                    x[:, :video_end],
-                    x[:, video_end:],
-                    c[:, :video_end],
-                    c[:, video_end:],
+                    x[:, :video_end],  # 视频序列数据   （B, (T P), C)
+                    x[:, video_end:],  # 图像数据       (B, P, C)
+                    c[:, :video_end],  # 视频条件数据
+                    c[:, video_end:],  # 图像条件数据
                 )
+                
+                # 对图像数据进行维度重排：将批次和时间维度合并
+                # 从 (批次, 时间×patch, 通道) 转换为 (批次×时间, patch, 通道)
                 x_img, c_img = rearrange_contiguous_many(
                     (x_img, c_img), "b (t p) c -> (b t) p c", p=self.num_patches
-                )  # as if they are sequences of length 1
+                )  # 重排后，图像数据被视为长度为1的序列
 
-        seq_batch_size = x.size(0)
-        img_batch_size = x_img.size(0) if x_img is not None else None
+        # 获取批次大小信息
+        seq_batch_size = x.size(0)  # 序列数据的批次大小
+        img_batch_size = x_img.size(0) if x_img is not None else None  # 图像数据的批次大小（可能为None）
 
-        seq_states = {"x": x, "c": c, "batch_size": seq_batch_size}
+        # 创建状态字典，统一管理序列和图像数据的处理状态
+        seq_states = {"x": x, "c": c, "batch_size": seq_batch_size}  # 序列状态
         img_states = (
             {"x": x_img, "c": c_img, "batch_size": img_batch_size}
-            if x_img is not None
+            if x_img is not None  # 只有当图像数据存在时才创建图像状态
             else None
         )
 
@@ -244,12 +260,19 @@ class DiTBase(nn.Module):
                 Union[Tuple[torch.Tensor, torch.Tensor], torch.Tensor],
             ]
         ):
-            """execute a function in parallel on the sequence and image tensors"""
+            """
+            在序列和图像张量上并行执行函数
+            对seq_states和img_states（如果存在）应用相同的函数操作
+            """
+            # 处理序列数据
             seq_result = fn(seq_states["x"], seq_states["c"], seq_states["batch_size"])
+            # 根据函数返回类型更新状态：可能是元组（更新x和c）或单个张量（只更新x）
             if isinstance(seq_result, tuple):
                 seq_states["x"], seq_states["c"] = seq_result
             else:
                 seq_states["x"] = seq_result
+                
+            # 如果图像状态存在，同样处理图像数据
             if img_states is not None:
                 img_result = fn(
                     img_states["x"], img_states["c"], img_states["batch_size"]
@@ -259,68 +282,112 @@ class DiTBase(nn.Module):
                 else:
                     img_states["x"] = img_result
 
+        # ==================== 位置编码处理阶段 ====================
+
+        # 一次性绝对位置编码：直接应用位置编码到输入
         if self.is_pos_emb_absolute_once:
             execute_in_parallel(lambda x, c, batch_size: self.pos_emb(x))
+            
+        # 因子化绝对位置编码：分别应用空间和时间位置编码
         if self.is_pos_emb_absolute_factorized and not self.is_factorized:
 
             def add_pos_emb(
                 x: torch.Tensor, _: torch.Tensor, batch_size: int
             ) -> torch.Tensor:
+                """应用因子化位置编码：先空间编码，再时间编码"""
+                # 重排：从 (批次, 时间×空间patch, 通道) 到 (批次×时间, 空间patch, 通道)
                 x = rearrange(x, "b (t p) c -> (b t) p c", p=self.num_patches)
+                # 应用空间位置编码
                 x = self.spatial_pos_emb(x)
+                # 重排：从 (批次×时间, 空间patch, 通道) 到 (批次×空间patch, 时间, 通道)
                 x = rearrange(x, "(b t) p c -> (b p) t c", b=batch_size)
+                # 应用时间位置编码
                 x = self.temporal_pos_emb(x)
+                # 重排：恢复原始形状 (批次, 时间×空间patch, 通道)
                 x = rearrange(x, "(b p) t c -> b (t p) c", b=batch_size)
                 return x
 
             execute_in_parallel(add_pos_emb)
 
+        # ==================== 因子化预处理阶段 ====================
+
+        # 如果启用因子化处理，进行初始维度重排
         if self.is_factorized:
+            # 将输入重排为空间块格式：从序列格式转换为空间块格式
             execute_in_parallel(
                 lambda x, c, batch_size: rearrange_contiguous_many(
                     (x, c), "b (t p) c -> (b t) p c", p=self.num_patches
                 )
             )
+            # 如果使用因子化绝对位置编码，应用空间位置编码
             if self.is_pos_emb_absolute_factorized:
                 execute_in_parallel(lambda x, c, batch_size: self.spatial_pos_emb(x))
 
+        # ==================== 主要块处理阶段 ====================
+
+        # 遍历所有块（空间块和时间块配对）
         for i, (block, temporal_block) in enumerate(
             zip(self.blocks, self.temporal_blocks or [None for _ in range(self.depth)])
         ):
+            # 应用空间Transformer块（使用梯度检查点以节省内存）
             execute_in_parallel(lambda x, c, batch_size: self.checkpoint(block, x, c))
 
+            # 如果启用因子化处理，进行时间维度处理
             if self.is_factorized:
+                # 重排：从空间维度到时间维度
                 execute_in_parallel(
                     lambda x, c, batch_size: rearrange_contiguous_many(
                         (x, c), "(b t) p c -> (b p) t c", b=batch_size
                     )
                 )
+                
+                # 仅在第一个块且使用正弦因子化位置编码时应用时间位置编码
                 if i == 0 and self.pos_emb_type == "sinusoidal_factorized":
                     execute_in_parallel(
                         lambda x, c, batch_size: self.temporal_pos_emb(x)
                     )
+                    
+                # 应用时间Transformer块
                 execute_in_parallel(
                     lambda x, c, batch_size: self.checkpoint(temporal_block, x, c)
                 )
+                
+                # 重排：从时间维度回到空间维度
                 execute_in_parallel(
                     lambda x, c, batch_size: rearrange_contiguous_many(
                         (x, c), "(b p) t c -> (b t) p c", b=batch_size
                     )
                 )
+                
+        # ==================== 后处理阶段 ====================
+
+        # 如果启用因子化处理，进行最终维度重排
         if self.is_factorized:
+            # 从空间块格式恢复为序列格式
             execute_in_parallel(
                 lambda x, c, batch_size: rearrange_contiguous_many(
                     (x, c), "(b t) p c -> b (t p) c", b=batch_size
                 )
             )
 
+        # 应用最终输出层
         execute_in_parallel(lambda x, c, batch_size: self.final_layer(x, c))
 
+        # ==================== 输出合并阶段 ====================
+
+        # 提取处理后的序列数据
         x = seq_states["x"]
+        # 提取处理后的图像数据（如果存在）
         x_img = img_states["x"] if img_states is not None else None
+        
+        # 如果存在图像数据，进行维度重排并合并到输出中
         if x_img is not None:
+            # 重排图像数据：从 (批次×时间, patch, 通道) 回到 (批次, 时间×patch, 通道)
             x_img = rearrange(x_img, "(b t) p c -> b (t p) c", b=seq_batch_size)
+            # 将图像数据连接到序列数据后面
             x = torch.cat([x, x_img], dim=1)
+            
+        # 返回最终的输出张量
         return x
 
 

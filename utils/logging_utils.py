@@ -94,13 +94,13 @@ def log_video(
         torch.tensor([0, -1], device=observation_gt.device, dtype=torch.long),
         indexing="ij",
     )
-    for i, c in enumerate(color):
-        c = c / 255.0
-        for observation_hat in observation_hats:
-            observation_hat[:, context_frames, i, indices, :] = c
-            observation_hat[:, context_frames, i, :, indices] = c
-        observation_gt[:, :, i, [0, -1], :] = c
-        observation_gt[:, :, i, :, [0, -1]] = c
+    # for i, c in enumerate(color):
+    #     c = c / 255.0
+    #     for observation_hat in observation_hats:
+    #         observation_hat[:, context_frames, i, indices, :] = c
+    #         observation_hat[:, context_frames, i, :, indices] = c
+    #     observation_gt[:, :, i, [0, -1], :] = c
+    #     observation_gt[:, :, i, :, [0, -1]] = c
     video = torch.cat([*observation_hats, observation_gt], -1).detach().cpu().numpy()
 
     # reshape to original shape
@@ -122,7 +122,7 @@ def log_video(
         caption = captions[i] if i < len(captions) else None
         logger.log(
             {
-                name: wandb.Video(video[i], fps=24, caption=caption),
+                name: wandb.Video(video[i], fps=24, caption=caption,format="gif"),
                 "trainer/global_step": step,
             }
         )

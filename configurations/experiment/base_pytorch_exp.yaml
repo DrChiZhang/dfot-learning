@@ -27,7 +27,7 @@ training:
     every_n_epochs: null # mutually exclusive with ``every_n_train_steps`` and ``train_time_interval``
     train_time_interval: null # in format of "00:12:00:00", mutually exclusive with ``every_n_train_steps`` and ``every_n_epochs``.
     enable_version_counter: False # If this is ``False``, later checkpoint will be overwrite previous ones.
-
+    save_top_k: -1 
 validation:
   precision: 16-mixed
   compile: False # whether to compile the model with torch.compile
