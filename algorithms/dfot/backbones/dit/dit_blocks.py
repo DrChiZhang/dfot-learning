@@ -136,10 +136,12 @@ class CrossAttention(nn.Module):
     def forward(self, q, x):
         B, n, C = q.shape
         q = self.q_proj(q).reshape(B, n, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
+        q = self.q_norm(q) # 可选QK归一化
 
         B, N, C = x.shape
         kv = self.kv_proj(x).reshape(B, N, 2, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
         k, v = kv[0], kv[1]  # (batch_size, num_heads, seq_len, feature_dim_per_head)
+        k = self.k_norm(k)   # 可选QK归一化
 
         if self.rope is not None:
             q = self.rope(q)
