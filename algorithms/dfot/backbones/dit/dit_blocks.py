@@ -107,47 +107,84 @@ class Attention(nn.Module):
         return x
     
 class CrossAttention(nn.Module):
-    def __init__(self, dim, num_heads=12, qkv_bias=False, fused_attn=True):
+    def __init__(
+        self, 
+        dim, 
+        num_heads=12, 
+        qkv_bias=False, 
+        qk_norm: bool = False,
+        attn_drop: float = 0.0,
+        proj_drop: float = 0.0,
+        norm_layer: nn.Module = nn.LayerNorm,
+        rope: Optional[RotaryEmbeddingND] = None,
+        fused_attn: bool = True,
+    ) -> None:
         super().__init__()
         self.num_heads = num_heads
         head_dim = dim // num_heads
         self.scale = head_dim**-0.5
-        self.q = nn.Linear(dim, dim, bias=qkv_bias)
-        self.kv = nn.Linear(dim, int(dim * 2), bias=qkv_bias)
-        # self.proj = nn.Linear(dim, dim)
+        self.q_proj = nn.Linear(dim, dim, bias=qkv_bias)
+        self.kv_proj = nn.Linear(dim, int(dim * 2), bias=qkv_bias)
+        self.q_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()
+        self.k_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()
+        self.attn_drop = nn.Dropout(attn_drop)
+        self.proj = nn.Linear(dim, dim)
+        self.proj_drop = nn.Dropout(proj_drop)
+        self.rope = rope
         self.fused_attn = fused_attn
 
     def forward(self, q, x):
         B, n, C = q.shape
-        q = self.q(q).reshape(B, n, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
+        q = self.q_proj(q).reshape(B, n, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
 
         B, N, C = x.shape
-        kv = self.kv(x).reshape(B, N, 2, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        kv = self.kv_proj(x).reshape(B, N, 2, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
         k, v = kv[0], kv[1]  # (batch_size, num_heads, seq_len, feature_dim_per_head)
 
+        if self.rope is not None:
+            q = self.rope(q)
+            k = self.rope(k)
+
         if self.fused_attn:
-            with torch.nn.attention.sdpa_kernel(SDPBackend.FLASH_ATTENTION):
-                q = F.scaled_dot_product_attention(q, k, v)
+            if q.dtype == torch.bfloat16:
+                with nn.attention.sdpa_kernel(SDPBackend.FLASH_ATTENTION):
+                    x =  F.scaled_dot_product_attention(q, k, v, dropout_p=self.attn_drop.p if self.training else 0.0,)
+            else:
+                with nn.attention.sdpa_kernel([SDPBackend.MATH, SDPBackend.EFFICIENT_ATTENTION]):
+                    x =  F.scaled_dot_product_attention(q, k, v, dropout_p=self.attn_drop.p if self.training else 0.0,)
+
+            # with torch.nn.attention.sdpa_kernel(SDPBackend.FLASH_ATTENTION):
+            #     q = F.scaled_dot_product_attention(q, k, v)
         else:
             xattn = (q @ k.transpose(-2, -1)) * self.scale
             xattn = xattn.softmax(dim=-1)  # (batch_size, num_heads, query_len, seq_len)
             q = xattn @ v
 
         q = q.transpose(1, 2).reshape(B, n, C)
+        
+        q = self.proj(q)
+        q = self.proj_drop(q)
+
         return q
 
 
 class CrossAttentionBlock(nn.Module):
-    def __init__(self, dim, num_heads, mlp_ratio=4.0, qkv_bias=False, act_layer=nn.GELU, norm_layer=nn.LayerNorm):
+    def __init__(self, 
+        hidden_size, 
+        num_heads, 
+        mlp_ratio: Optional[float] = 4.0,
+        rope: Optional[RotaryEmbeddingND] = None,
+        **block_kwargs: dict,
+    ):
         super().__init__()
-        self.norm1 = norm_layer(dim)
-        self.xattn = CrossAttention(dim, num_heads=num_heads, qkv_bias=qkv_bias)
-        self.norm2 = norm_layer(dim)
+        self.norm1 = nn.LayerNorm(hidden_size)
+        self.xattn = CrossAttention(hidden_size, num_heads=num_heads, qkv_bias=True, rope=rope, **block_kwargs)
+        self.norm2 = nn.LayerNorm(hidden_size)
         self.use_mlp = mlp_ratio is not None
         if self.use_mlp:
             self.mlp = Mlp(
-                in_features=dim,
-                hidden_features=int(dim * mlp_ratio),
+                in_features=hidden_size,
+                hidden_features=int(hidden_size * mlp_ratio),
                 act_layer=partial(nn.GELU, approximate="tanh"),
             )
         self.initialize_weights()
