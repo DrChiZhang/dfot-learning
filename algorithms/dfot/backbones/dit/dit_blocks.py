@@ -283,7 +283,8 @@ class DiTBlock(nn.Module):
         num_heads: int,
         mlp_ratio: Optional[float] = 4.0,
         rope: Optional[RotaryEmbeddingND] = None,
-        **block_kwargs: dict,
+        cross_attn: bool = False,
+        **block_kwargs: Dict[str, Any],
     ):
         """
         Args:
@@ -293,9 +294,9 @@ class DiTBlock(nn.Module):
             block_kwargs: Additional arguments to pass to the Attention block.
         """
         super().__init__()
-
+        self.norm = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6) 
         self.norm1 = AdaLayerNormZero(hidden_size)
-        self.attn = Attention(
+        self.attn1 = Attention(
             hidden_size, num_heads=num_heads, qkv_bias=True, rope=rope, **block_kwargs
         )
         self.use_mlp = mlp_ratio is not None
@@ -307,6 +308,11 @@ class DiTBlock(nn.Module):
                 act_layer=partial(nn.GELU, approximate="tanh"),
             )
         self.initialize_weights()
+        self.cross_attn=cross_attn
+        if self.cross_attn:
+            self.attn2 = CrossAttentionBlock(
+                hidden_size, num_heads=num_heads, qkv_bias=True, mlp_ratio = mlp_ratio, rope=rope, **block_kwargs
+            )
 
     def initialize_weights(self):
         # Initialize transformer linear layers:
@@ -316,11 +322,11 @@ class DiTBlock(nn.Module):
                 if module.bias is not None:
                     nn.init.zeros_(module.bias)
 
-        self.attn.apply(_basic_init)
+        self.attn1.apply(_basic_init)
         if self.use_mlp:
             self.mlp.apply(_basic_init)
 
-    def forward(self, x: torch.Tensor, c: torch.Tensor):
+    def forward(self, x: torch.Tensor, c: torch.Tensor, external_cond: Optional[torch.Tensor] = None):
         """
         Forward pass of the DiT block.
         In original implementation, conditioning is uniform across all tokens in the sequence. Here, we extend it to support token-wise conditioning (e.g. noise level can be different for each token).
@@ -329,10 +335,16 @@ class DiTBlock(nn.Module):
             c: Conditioning tensor of shape (B, N, C).
         """
         x, gate_msa = self.norm1(x, c)
-        x = x + gate_msa * self.attn(x)
+        x = x + gate_msa * self.attn1(x)
         if self.use_mlp:
             x, gate_mlp = self.norm2(x, c)
             x = x + gate_mlp * self.mlp(x)
+        if self.cross_attn:
+            assert (
+                external_cond is not None
+            ), "External condition (camera pose) is required for cross attention."
+            x = self.attn2(x, external_cond)
+
         return x
 
 
