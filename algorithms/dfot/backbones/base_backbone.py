@@ -24,7 +24,7 @@ class BaseBackbone(ABC, nn.Module):
         self.cfg = cfg
         self.external_cond_dim = external_cond_dim
         self.use_causal_mask = use_causal_mask
-        self.x_shape = x_shape
+        self.x_shape = x_shape   # [3, "${dataset.resolution}", "${dataset.resolution}"]
 
         self.noise_level_pos_embedding = StochasticTimeEmbedding(
             dim=self.noise_level_dim,

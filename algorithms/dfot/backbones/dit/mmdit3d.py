@@ -3,12 +3,15 @@ import torch
 from torch import nn
 from omegaconf import DictConfig
 from einops import rearrange, repeat
+from ..modules.embeddings import (
+    RandomDropoutPatchEmbed,
+)
 from timm.models.vision_transformer import PatchEmbed
 from ..base_backbone import BaseBackbone
-from .dit_base import DiTBase
+from .mmdit_base import MMDiTBase
 
 
-class DiT3D(BaseBackbone):
+class MMDiT3D(BaseBackbone):
 
     def __init__(
         self,
@@ -22,7 +25,7 @@ class DiT3D(BaseBackbone):
             raise NotImplementedError(
                 "Causal masking is not yet implemented for DiT3D backbone"
             )
-
+        self.conditioning_dropout = cfg.external_cond_dropout
         super().__init__(
             cfg,
             x_shape,
@@ -33,7 +36,7 @@ class DiT3D(BaseBackbone):
 
         hidden_size = cfg.hidden_size
         self.patch_size = cfg.patch_size
-        channels, resolution, *_ = x_shape #  [3, "${dataset.resolution}", "${dataset.resolution}"]
+        channels, resolution, *_ = x_shape
         assert (
             resolution % self.patch_size == 0
         ), "Resolution must be divisible by patch size."
@@ -48,7 +51,7 @@ class DiT3D(BaseBackbone):
             bias=True,
         )
 
-        self.dit_base = DiTBase(
+        self.dit_base = MMDiTBase(
             num_patches=self.num_patches,
             max_temporal_length=max_tokens,
             out_channels=out_channels,
@@ -60,12 +63,23 @@ class DiT3D(BaseBackbone):
             mlp_ratio=cfg.mlp_ratio,
             learn_sigma=False,
             use_gradient_checkpointing=cfg.use_gradient_checkpointing,
+            conditioning_scale=cfg.get("conditioning_scale", 1.0),
         )
         self.initialize_weights()
 
     @property
     def in_channels(self) -> int:
-        return self.x_shape[0]  #  [3, "${dataset.resolution}", "${dataset.resolution}"]
+        return self.x_shape[0]
+    
+    def _build_external_cond_embedding(self) -> Optional[nn.Module]:
+        return RandomDropoutPatchEmbed(
+                    dropout_prob=self.conditioning_dropout,
+                    img_size=self.x_shape[1],
+                    patch_size=self.cfg.patch_size,
+                    in_chans=self.external_cond_dim,
+                    embed_dim=self.external_cond_emb_dim,
+                    bias=True,
+            )
 
     @staticmethod
     def _patch_embedder_init(embedder: PatchEmbed) -> None:
@@ -123,17 +137,21 @@ class DiT3D(BaseBackbone):
         external_cond_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         input_batch_size = x.shape[0]
+
         x = rearrange(x, "b t c h w -> (b t) c h w")
         x = self.patch_embedder(x)
         x = rearrange(x, "(b t) p c -> b (t p) c", b=input_batch_size)
 
+        external_cond_emb = self.external_cond_embedding(
+            external_cond, external_cond_mask
+        )
+        external_cond_emb = rearrange(external_cond_emb, "b t p c -> b (t p) c")
+
         emb = self.noise_level_pos_embedding(noise_levels)
-        import pdb; pdb.set_trace()
-        if external_cond is not None:
-            emb = emb + self.external_cond_embedding(external_cond, external_cond_mask)
+
         emb = repeat(emb, "b t c -> b (t p) c", p=self.num_patches)
 
-        x = self.dit_base(x, emb)  # (B, N, C)
+        x = self.dit_base(x, emb, external_cond_emb)  # (B, N, C)
         x = self.unpatchify(
             rearrange(x, "b (t p) c -> (b t) p c", p=self.num_patches)
         )  # (B * T, H, W, C)
