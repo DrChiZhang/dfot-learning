@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.attention import SDPBackend
+import math
 
 from timm.models.vision_transformer import Mlp
 from ..modules.embeddings import RotaryEmbeddingND
@@ -15,39 +16,6 @@ from ..modules.embeddings import RotaryEmbeddingND
 def modulate(x: torch.Tensor, shift: torch.Tensor, scale: torch.Tensor):
     return x * (1 + scale) + shift
 
-
-class Attention(nn.Module):
-    """
-    Adapted from timm.models.vision_transformer,
-    to support the use of RoPE.
-    """
-
-    def __init__(
-        self,
-        dim: int,
-        num_heads: int = 8,
-        qkv_bias: bool = False,
-        qk_norm: bool = False,
-        attn_drop: float = 0.0,
-        proj_drop: float = 0.0,
-        norm_layer: nn.Module = nn.LayerNorm,
-        rope: Optional[RotaryEmbeddingND] = None,
-        fused_attn: bool = True,
-    ) -> None:
-        super().__init__()
-        assert dim % num_heads == 0, f"dim should be divisible by num_heads {dim} {num_heads}."
-        self.num_heads = num_heads
-        self.head_dim = dim // num_heads
-        self.scale = self.head_dim**-0.5
-        self.fused_attn = fused_attn
-
-        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
-        self.q_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()
-        self.k_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()
-        self.attn_drop = nn.Dropout(attn_drop)
-        self.proj = nn.Linear(dim, dim)
-        self.proj_drop = nn.Dropout(proj_drop)
-        self.rope = rope
     """
     输入: [B, N, C]
     ↓ qkv线性层
@@ -71,6 +39,43 @@ class Attention(nn.Module):
     ↓ 投影层
     [B, N, C]
     """
+class Attention(nn.Module):
+    """
+    Adapted from timm.models.vision_transformer,
+    to support the use of RoPE.
+    """
+
+    def __init__(
+        self,
+        dim: int,
+        num_heads: int = 8,
+        qkv_bias: bool = False,
+        qk_norm: bool = False,
+        attn_drop: float = 0.0,
+        proj_drop: float = 0.0,
+        norm_layer: nn.Module = nn.LayerNorm,
+        rope: Optional[RotaryEmbeddingND] = None,
+        fused_attn: bool = True,
+        is_conditional: bool = False,
+        conditioning_scale: float = 1.0,
+    ) -> None:
+        super().__init__()
+        assert dim % num_heads == 0, f"dim should be divisible by num_heads {dim} {num_heads}."
+        self.num_heads = num_heads
+        self.head_dim = dim // num_heads
+        self.scale = self.head_dim**-0.5
+        self.fused_attn = fused_attn
+
+        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        self.q_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()
+        self.k_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()
+        self.attn_drop = nn.Dropout(attn_drop)
+        self.proj = nn.Linear(dim, dim)
+        self.proj_drop = nn.Dropout(proj_drop)
+        self.rope = rope
+        self.is_conditional = is_conditional
+        self.conditioning_scale = conditioning_scale
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, N, C = x.shape           #batch, sequence length, channels
         qkv = (
@@ -82,8 +87,27 @@ class Attention(nn.Module):
         q, k = self.q_norm(q), self.k_norm(k)   # 可选QK归一化
 
         if self.rope is not None:
-            q = self.rope(q)
-            k = self.rope(k)
+            if self.is_conditional:
+                q_x, q_cond = q.chunk(2, dim=-2)
+                k_x, k_cond = k.chunk(2, dim=-2)
+                q = torch.cat((self.rope(q_x), self.rope(q_cond)), dim=-2)
+                k = torch.cat((self.rope(k_x), self.rope(k_cond)), dim=-2)
+            else:
+                q = self.rope(q)
+                k = self.rope(k)
+
+        if self.is_conditional and self.conditioning_scale != 1.0:
+            N_input = N // 2
+            ## register attn bias
+            if not hasattr(self, "attn_bias") or self.attn_bias.shape[-1] != N:
+                self.attn_bias = torch.zeros(1, 1, N, N, device=x.device)
+                self.attn_bias[:, :, :N_input, :N_input] = 0.0
+                self.attn_bias[:, :, :N_input, N_input:] = math.log(self.conditioning_scale)
+                self.attn_bias[:, :, N_input:, :N_input] = math.log(self.conditioning_scale)
+                self.attn_bias[:, :, N_input:, N_input:] = 0.0
+            self.attn_bias = self.attn_bias.to(x.dtype)
+        else:
+            self.attn_bias = None
 
         if self.fused_attn:
             # pylint: disable-next=not-callable, # 使用PyTorch的高效注意力实现
@@ -92,11 +116,14 @@ class Attention(nn.Module):
                 k,
                 v,
                 dropout_p=self.attn_drop.p if self.training else 0.0,
+                attn_mask=self.attn_bias,
             )
         else:
             # 手动实现注意力机制
             q = q * self.scale
             attn = q @ k.transpose(-2, -1)
+            if self.attn_bias is not None:
+                attn = attn + self.attn_bias
             attn = attn.softmax(dim=-1)
             attn = self.attn_drop(attn)
             x = attn @ v

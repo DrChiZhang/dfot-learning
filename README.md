@@ -1,91 +1,129 @@
-<div align="center">
+<h1 align="center">Diffusion Forcing Transformer with History Guidance</h1>
+<p align="center">
+  <p align="center">
+    <a href="https://kiwhan.dev/">Kiwhan Song*<sup>1</sup></a>
+    ·
+    <a href="https://boyuan.space/">Boyuan Chen*<sup>1</sup></a>
+    ·
+    <a href="https://msimchowitz.github.io/">Max Simchowitz<sup>2</sup></a>
+    ·
+    <a href="https://yilundu.github.io/">Yilun Du<sup>3</sup></a>
+    ·
+    <a href="https://groups.csail.mit.edu/locomotion/russt.html">Russ Tedrake<sup>1</sup></a>
+    ·
+    <a href="https://www.vincentsitzmann.com/">Vincent Sitzmann<sup>1</sup></a>
+    <br/>
+    *Equal contribution <sup>1</sup>MIT <sup>2</sup>CMU <sup>3</sup>Harvard
+  </p>
+  <h4 align="center">ICML 2025</h4>
+  <h3 align="center"><a href="https://arxiv.org/abs/2502.06764">Paper</a> | <a href="https://boyuan.space/history-guidance">Website</a> | <a href="https://huggingface.co/spaces/kiwhansong/diffusion-forcing-transformer">HuggingFace Demo</a> | <a href="https://huggingface.co/kiwhansong/DFoT">Pretrained Models</a></h3>
+</p>
 
-<h1>Geometry Forcing: Marrying Video Diffusion and 3D Representation for Consistent World Modeling </h1>
-<a href="https://www.arxiv.org/abs/2507.07982">
-<img src='https://img.shields.io/badge/arxiv-geometryforcing-darkred' alt='Paper PDF'></a>
-<a href="https://geometryforcing.github.io/">
-<img src='https://img.shields.io/badge/Project-Website-orange' alt='Project Page'></a>
+This is the official repository for the paper [**_History-Guided Video Diffusion_**](https://arxiv.org/abs/2502.06764). We introduce the **Diffusion Forcing Tranformer (DFoT)**, a novel video diffusion model that designed to generate videos conditioned on an arbitrary number of context frames.  Additionally, we present **History Guidance (HG)**, a family of guidance methods uniquely enabled by DFoT. These methods significantly enhance video generation quality, temporal consistency, and motion dynamics, while also unlocking new capabilities such as compositional video generation and the stable rollout of extremely long videos.
+
+![teaser](teaser.png)
 
 
-[Haoyu Wu](https://cintellifusion.github.io/)$^{1*}$, Diankun Wu $^{2*}$, Tianyu He $^{1†}$, Junliang Guo $^{1}$, Yang Ye $^{1}$, Yueqi Duan $^{2}$, Jiang Bian $^{1}$
+## 🔥 News
+- **2025-05**: DFoT is accepted to **ICML 2025**.
+- **2025-02**: [Diffusion Forcing Transformer](https://github.com/kwsong0113/diffusion-forcing-transformer) is released.
 
-$^1$ Microsoft Research $^2$ Tsinghua University
+## 🤗 Try generating videos with DFoT in your browser!
 
-($^*$ Equal Contribution. † Project Lead)
+We provide an [_interactive_ demo](https://huggingface.co/spaces/kiwhansong/diffusion-forcing-transformer) on HuggingFace Spaces, where you can generate videos with DFoT and History Guidance. On the RealEstate10K dataset, you can generate:
+- Any Number of Images → Short 2-second Video
+- Single Image → Long 10-second Video
+- Single Image → Extremely Long Video (like the teaser above!)
 
-</div>
+Please check it out and have fun generating videos with DFoT!
 
-# Reference 
 
-```
-@article{wu2025geometryforcing,
-  title={Geometry Forcing: Marrying Video Diffusion and 3D Representation for Consistent World Modeling},
-  author={Wu, Haoyu and Wu, Diankun and He, Tianyu and Guo, Junliang and Ye, Yang and Duan, Yueqi and Bian, Jiang},
-  journal={arXiv preprint arXiv:2507.07982},
-  year={2025}
-}
-```
+## 📖 Detailed Development Wiki
+If you just want quickly try our model in python, you can skip this section and proceed to the "Quick Start" section. Otherwise, we provide a comprehensive [wiki](https://github.com/kwsong0113/diffusion-forcing-transformer/wiki) for developers who want to extend the DFoT framework. It offers a detailed guide on thse topics:
+- code structure
+- command line options
+- datasets structure
+- checkpointing and loading
+- training and evaluating DFoT or baseline models
+- every command to reproduce the paper's result
 
-<!-- include asset/main.png -->
+## 🚀 Quick Start
 
-# Overview 
-![](assets/main.png)
-**Geometry Forcing (GF) Overview.**
-(a) Our proposed GF paradigm enhances video diffusion models by aligning with geometric features from VGGT~\citep{wang2025vggt}. 
-(b) Compared to DFoT~\citep{dfot}, our method generates more temporally and geometrically consistent videos. 
-(c) While baseline features fail to reconstruct meaningful 3D geometry, GF-learned features enable accurate 3D reconstruction.
+### Setup
 
-# 🚀News
-
-- [2025/9/24] We release code and checkpoint.
-- [2025/9/22] [Geometry Forcing](https://geometryforcing.github.io/) is accepted to [NeurIPS 2025 NextVid Workshop](https://what-makes-good-video.github.io/) as an Oral!
-- [2025/7/10] We release the paper and the project. 
-
-# 💪Get Started 
-
-## Setup Environments 
-
-```shell
-conda create -n geometryforcing python=3.10 -y
-conda activate geometryforcing
+#### 1. Create a conda environment and install dependencies:
+```bash
+conda create python=3.10 -n dfot
+conda activate dfot
 pip install -r requirements.txt
 ```
-
-## Connect to Weights & Biases:
-
+#### 2. Connect to Weights & Biases:
 We use Weights & Biases for logging. [Sign up](https://wandb.ai/login?signup=true) if you don't have an account, and *modify `wandb.entity` in `config.yaml` to your user/organization name*.
 
-## Download Checkpoints and Data
-1. Download pretrained checkpiont using huggingface: 
-```shell
-bash scripts/hf_download_checkpoints.sh
+### Generating Videos with Pretrained Models
+
+Simply run one of the commands below to generate videos with a pretrained DFoT model. They will automatically download a tiny subset of the RealEstate10K dataset and a pretrained DFoT model.
+
+
+#### 1. Single Image to Long Video (200 Frames, takes ~10 mins):
+> **NOTE**: if you encounter CUDA out-of-memory errors (due to limited VRAM), try setting `algorithm.tasks.interpolation.max_batch_size=1`.
+```bash
+python -m main +name=single_image_to_long dataset=realestate10k_mini algorithm=dfot_video_pose experiment=video_generation @diffusion/continuous load=pretrained:DFoT_RE10K.ckpt 'experiment.tasks=[validation]' experiment.validation.data.shuffle=True dataset.context_length=1 dataset.frame_skip=1 dataset.n_frames=200 algorithm.tasks.prediction.keyframe_density=0.0625 algorithm.tasks.interpolation.max_batch_size=4 experiment.validation.batch_size=1 algorithm.tasks.prediction.history_guidance.name=stabilized_vanilla +algorithm.tasks.prediction.history_guidance.guidance_scale=4.0 +algorithm.tasks.prediction.history_guidance.stabilization_level=0.02  algorithm.tasks.interpolation.history_guidance.name=vanilla +algorithm.tasks.interpolation.history_guidance.guidance_scale=1.5
+```
+
+#### 2. Single Image to Short Video (8 Frames, takes <1 min):
+```bash
+python -m main +name=single_image_to_short dataset=realestate10k_mini algorithm=dfot_video_pose experiment=video_generation @diffusion/continuous load=pretrained:DFoT_RE10K.ckpt 'experiment.tasks=[validation]' experiment.validation.data.shuffle=True dataset.context_length=1 dataset.frame_skip=20 dataset.n_frames=8 experiment.validation.batch_size=1 algorithm.tasks.prediction.history_guidance.name=vanilla +algorithm.tasks.prediction.history_guidance.guidance_scale=4.0
+```
+
+#### 3. Interpolating Two Distant Images into Short Video (8 Frames, takes <1 min):
+```bash
+python -m main +name=two_images_to_interpolated dataset=realestate10k_mini algorithm=dfot_video_pose experiment=video_generation @diffusion/continuous load=pretrained:DFoT_RE10K.ckpt 'experiment.tasks=[validation]' experiment.validation.data.shuffle=True dataset.frame_skip=20 dataset.n_frames=8 experiment.validation.batch_size=1 algorithm.tasks.prediction.enabled=False algorithm.tasks.interpolation.enabled=True algorithm.tasks.interpolation.history_guidance.name=vanilla +algorithm.tasks.interpolation.history_guidance.guidance_scale=4.0
+```
+
+#### 4. Generating Videos on Other Datasets
+Please refer to our [wiki](https://github.com/kwsong0113/diffusion-forcing-transformer/wiki/Inference-%26-Reproducing-Results) for more details.
+
+### Training
+
+Training a DFoT model requires a large, full dataset. The commands below will automatically download the necessary data, but please note that this process may take a while (~few hours). We also provide specifications for the GPUs required for training. If you are training with fewer GPUs or using a smaller `⁠experiment.training.batch_size`, we recommend proportionally reducing `⁠experiment.training.lr`. You training will produce a wandb link which ends with a wandb run id. To load or resume your trained model, simply append `load={the_wandb_run_id}` and `resume={the_wandb_run_id}` to the training / inferencecommand.
+
+#### 1. RealEstate10K (12 x 80GB VRAM GPUs)
+
+```bash
+python -m main +name=RE10k dataset=realestate10k algorithm=dfot_video_pose experiment=video_generation @diffusion/continuous
+```
+
+#### 2. Kinetics-600 (12 x 80GB VRAM GPUs)
+
+```bash
+python -m main +name=K600 dataset=kinetics_600 algorithm=dfot_video experiment=video_generation @DiT/XL
+```
+
+#### 3. Minecraft (12 x 80GB VRAM GPUs)
+> **Note**: Minecraft training requires additionally preprocessing videos into latents (see [here](https://github.com/kwsong0113/diffusion-forcing-transformer/wiki/Training#preprocessing-videos-to-latents-using-imagevaes)).
+
+```bash
+python -m main +name=MCRAFT dataset=minecraft algorithm=dfot_video experiment=video_generation @diffusion/continuous @DiT/B
 ```
 
 
-2. Download pretrained checkpiont using modelscope: 
+## 📝 Acknowledgements
+This repo is using [Boyuan Chen](https://boyuan.space/)'s research template [repo](https://github.com/buoyancy99/research-template). By its license, we just ask you to keep the above sentence and links in `README.md` and the `LICENSE` file to credit the author.
 
-```shell
-bash scripts/ms_download_checkpoints.sh
-```
 
-3. Download and process RealEstate10k dataset to  `data/real-estate-10k`
+## 📌 Citation
 
-## Generating Videos with Pretrained Models
+If our work is useful for your research, please consider giving us a star and citing our paper:
 
-### 1. Single Image to Long Video (256 Frames):
-
-```shell
-bash scripts/eval_geometry_forcing.sh
-```
-
-### 2. Single Image to Rotation Video (16 Frames):
-
-```shell
-bash scripts/eval_geometry_forcing_rotation.sh
-```
-
-## Training Geometry Forcing
-
-```shell
-bash scripts/train_geometry_forcing.sh
+```bibtex
+@misc{song2025historyguidedvideodiffusion,
+  title={History-Guided Video Diffusion}, 
+  author={Kiwhan Song and Boyuan Chen and Max Simchowitz and Yilun Du and Russ Tedrake and Vincent Sitzmann},
+  year={2025},
+  eprint={2502.06764},
+  archivePrefix={arXiv},
+  primaryClass={cs.LG},
+  url={https://arxiv.org/abs/2502.06764}, 
+}
 ```
